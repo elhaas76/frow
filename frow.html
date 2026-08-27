@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Frow</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #000; overscroll-behavior: none;
+  }
+  canvas {
+    display: block; width: 100vw; height: 100vh;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  let dpr = 1, vw = window.innerWidth, vh = window.innerHeight;
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    vw = window.innerWidth; vh = window.innerHeight;
+    canvas.width = Math.round(vw * dpr);
+    canvas.height = Math.round(vh * dpr);
+    canvas.style.width = vw + 'px';
+    canvas.style.height = vh + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', resize);
+  resize();
+
+  // ---------------------------------------------------------------- audio
+  let audioCtx = null, masterGain = null, droneOsc1 = null, droneOsc2 = null, droneGain = null;
+
+  function initAudio() {
+    if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.5;
+      masterGain.connect(audioCtx.destination);
+      startDrone();
+    } catch (e) { audioCtx = null; }
+  }
+
+  function startDrone() {
+    droneGain = audioCtx.createGain();
+    droneGain.gain.value = 0;
+    droneGain.connect(masterGain);
+    droneOsc1 = audioCtx.createOscillator();
+    droneOsc1.type = 'sine';
+    droneOsc1.frequency.value = 110;
+    droneOsc2 = audioCtx.createOscillator();
+    droneOsc2.type = 'sine';
+    droneOsc2.frequency.value = 110 * 1.5;
+    droneOsc1.connect(droneGain);
+    droneOsc2.connect(droneGain);
+    droneOsc1.start();
+    droneOsc2.start();
+    droneGain.gain.linearRampToValueAtTime(0.05, audioCtx.currentTime + 2.5);
+  }
+
+  function setDroneFrequency(freq) {
+    if (!droneOsc1 || !audioCtx) return;
+    const t = audioCtx.currentTime;
+    droneOsc1.frequency.cancelScheduledValues(t);
+    droneOsc2.frequency.cancelScheduledValues(t);
+    droneOsc1.frequency.linearRampToValueAtTime(freq, t + 1.5);
+    droneOsc2.frequency.linearRampToValueAtTime(freq * 1.5, t + 1.5);
+  }
+
+  function playTone({ freq = 440, freqEnd = null, duration = 0.15, type = 'sine', peak = 0.3, delay = 0 } = {}) {
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime + delay;
+    const osc = audioCtx.createOscillator();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (freqEnd !== null) osc.frequency.linearRampToValueAtTime(freqEnd, t0 + duration);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(peak, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(g); g.connect(masterGain);
+    osc.start(t0); osc.stop(t0 + duration + 0.05);
+  }
+
+  function playNoiseBurst({ duration = 0.4, peak = 0.4, delay = 0, filterFreq = 800 } = {}) {
+    if (!audioCtx) return;
+    const t0 = audioCtx.currentTime + delay;
+    const bufferSize = Math.max(1, Math.floor(audioCtx.sampleRate * duration));
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+    const noise = audioCtx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = filterFreq;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(peak, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    noise.connect(filter); filter.connect(g); g.connect(masterGain);
+    noise.start(t0);
+  }
+
+  const sfx = {
+    eatGood: () => playTone({ freq: 700, freqEnd: 1050, duration: 0.12, type: 'sine', peak: 0.25 }),
+    eatHazard: () => playTone({ freq: 200, freqEnd: 80, duration: 0.24, type: 'sawtooth', peak: 0.2 }),
+    levelUp: () => playTone({ freq: 300, freqEnd: 950, duration: 0.6, type: 'sine', peak: 0.3 }),
+    tongue: () => playTone({ freq: 950, freqEnd: 1500, duration: 0.09, type: 'triangle', peak: 0.22 }),
+    frogGulp: () => {
+      playTone({ freq: 160, freqEnd: 35, duration: 0.4, type: 'sine', peak: 0.35 });
+      playNoiseBurst({ duration: 0.3, peak: 0.3, delay: 0.05, filterFreq: 400 });
+    },
+    splat: () => {
+      playNoiseBurst({ duration: 0.5, peak: 0.35, filterFreq: 1200 });
+      playTone({ freq: 500, freqEnd: 180, duration: 0.22, type: 'triangle', peak: 0.2, delay: 0.02 });
+    },
+  };
+
+  // --------------------------------------------------------------- config
+  const WORLD_W = 2600, WORLD_H = 1900;
+  const HEAD_RADIUS = 16;
+  const LEVEL_UP_SCORE = 3;
+  const SEGMENT_STEP = 10;
+  const TRAIL_PER_SEGMENT = 2;
+  const SPAWN_EXCLUDE_RADIUS = 260;
+
+  const LEVELS = [
+    {
+      bgTop: '#15486a', bgBottom: '#0a2436',
+      preyCount: 9, hazardCount: 5,
+      preySpeed: 55, preyFleeSpeed: 115, fleeRadius: 130, hazardSpeed: 22,
+      droneFreq: 110,
+    },
+    {
+      bgTop: '#0d2c40', bgBottom: '#061622',
+      preyCount: 10, hazardCount: 8,
+      preySpeed: 70, preyFleeSpeed: 140, fleeRadius: 150, hazardSpeed: 28,
+      droneFreq: 88,
+    },
+    {
+      bgTop: '#061420', bgBottom: '#01070c',
+      preyCount: 11, hazardCount: 11,
+      preySpeed: 85, preyFleeSpeed: 165, fleeRadius: 170, hazardSpeed: 34,
+      droneFreq: 66,
+    },
+  ];
+
+  // --------------------------------------------------------------- state
+  let state = 'TITLE'; // TITLE, PLAYING, TRANSITION, FROG
+  let level = 1;
+  let score = 0; // progress toward the next level, resets every level
+  let growth = 0; // total segments/complexity, persists across levels 1-3
+
+  const player = { x: WORLD_W / 2, y: WORLD_H / 2, trail: [], pulse: 0 };
+  let prey = [];
+  let hazards = [];
+  const camera = { x: 0, y: 0 };
+  const dust = [];
+
+  const pointer = { x: vw / 2, y: vh / 2, active: false };
+
+  let transitionTimer = 0;
+  let transitionPhase = 0; // 0: fade out, 1: fade in
+  let pendingLevel = 1;
+
+  let frogTimer = 0;
+  let frogSoundsFired = {};
+  let frogAngle = 0;
+  const FROG_DIAGONALS = [Math.PI / 4, 3 * Math.PI / 4, 5 * Math.PI / 4, 7 * Math.PI / 4];
+  const frog = { cx: 0, cy: 0, scale: 0, tongueLen: 0 };
+  const cutParts = []; // the player's own body (head + every segment) being swallowed
+  let cutPartsVisible = true;
+  const lump = { x: 0, y: 0, scale: 1, count: 1, visible: false };
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function randomWorldPos(excludeX, excludeY, excludeR) {
+    let x, y, tries = 0;
+    do {
+      x = rand(60, WORLD_W - 60);
+      y = rand(60, WORLD_H - 60);
+      tries++;
+    } while (dist(x, y, excludeX, excludeY) < excludeR && tries < 30);
+    return { x, y };
+  }
+
+  function makePrey(cfg) {
+    const p = randomWorldPos(player.x, player.y, SPAWN_EXCLUDE_RADIUS);
+    return {
+      x: p.x, y: p.y, vx: 0, vy: 0,
+      radius: rand(7, 10),
+      wanderAngle: rand(0, Math.PI * 2), wanderTimer: rand(0.3, 1.2),
+      phase: rand(0, Math.PI * 2),
+    };
+  }
+
+  function makeHazard(cfg) {
+    const p = randomWorldPos(player.x, player.y, SPAWN_EXCLUDE_RADIUS);
+    return {
+      x: p.x, y: p.y,
+      speed: cfg.hazardSpeed * rand(0.6, 1.2),
+      driftAngle: rand(0, Math.PI * 2), driftTimer: rand(0.5, 1.5),
+      radius: rand(8, 11),
+      phase: rand(0, Math.PI * 2),
+    };
+  }
+
+  function makeDust() {
+    dust.length = 0;
+    for (let i = 0; i < 90; i++) {
+      dust.push({
+        x: rand(0, WORLD_W), y: rand(0, WORLD_H),
+        r: rand(0.6, 2.2), a: rand(0.15, 0.5), depth: rand(0.35, 0.8),
+      });
+    }
+  }
+
+  function initLevel(lv, resetGrowth) {
+    level = lv;
+    score = 0;
+    if (resetGrowth) growth = 0;
+    player.x = WORLD_W / 2;
+    player.y = WORLD_H / 2;
+    player.trail = [];
+    player.pulse = 0;
+    const cfg = LEVELS[level - 1];
+    prey = []; hazards = [];
+    for (let i = 0; i < cfg.preyCount; i++) prey.push(makePrey(cfg));
+    for (let i = 0; i < cfg.hazardCount; i++) hazards.push(makeHazard(cfg));
+    makeDust();
+    setDroneFrequency(cfg.droneFreq);
+  }
+
+  // --------------------------------------------------------------- input
+  function updatePointerFromClient(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    pointer.x = clientX - rect.left;
+    pointer.y = clientY - rect.top;
+  }
+
+  canvas.addEventListener('mousemove', (e) => {
+    updatePointerFromClient(e.clientX, e.clientY);
+  });
+  canvas.addEventListener('mousedown', (e) => {
+    pointer.active = true;
+    updatePointerFromClient(e.clientX, e.clientY);
+    handlePrimaryAction();
+  });
+  window.addEventListener('mouseup', () => { pointer.active = false; });
+
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    pointer.active = true;
+    const t = e.touches[0];
+    if (t) updatePointerFromClient(t.clientX, t.clientY);
+    handlePrimaryAction();
+  }, { passive: false });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (t) updatePointerFromClient(t.clientX, t.clientY);
+  }, { passive: false });
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    pointer.active = false;
+  }, { passive: false });
+
+  function handlePrimaryAction() {
+    initAudio();
+    if (state === 'TITLE') {
+      startPlaying();
+    }
+  }
+
+  function startPlaying() {
+    state = 'PLAYING';
+    initLevel(1, true);
+  }
+
+  // -------------------------------------------------------------- update
+  let lastTime = performance.now();
+
+  function updatePrey(p, dt, cfg) {
+    const dx = p.x - player.x, dy = p.y - player.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < cfg.fleeRadius) {
+      const ang = Math.atan2(dy, dx);
+      p.vx += Math.cos(ang) * cfg.preyFleeSpeed * dt * 4;
+      p.vy += Math.sin(ang) * cfg.preyFleeSpeed * dt * 4;
+    } else {
+      p.wanderTimer -= dt;
+      if (p.wanderTimer <= 0) {
+        p.wanderAngle += rand(-1.3, 1.3);
+        p.wanderTimer = rand(0.5, 1.3);
+      }
+      p.vx += Math.cos(p.wanderAngle) * cfg.preySpeed * dt * 1.1;
+      p.vy += Math.sin(p.wanderAngle) * cfg.preySpeed * dt * 1.1;
+    }
+    p.vx *= 0.92; p.vy *= 0.92;
+    const speed = Math.hypot(p.vx, p.vy) || 0.0001;
+    const maxSpeed = d < cfg.fleeRadius ? cfg.preyFleeSpeed : cfg.preySpeed;
+    if (speed > maxSpeed) { p.vx = p.vx / speed * maxSpeed; p.vy = p.vy / speed * maxSpeed; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    bounceInWorld(p, p.vx !== undefined);
+  }
+
+  function updateHazard(h, dt) {
+    h.driftTimer -= dt;
+    if (h.driftTimer <= 0) {
+      h.driftAngle += rand(-1, 1);
+      h.driftTimer = rand(0.8, 1.8);
+    }
+    h.x += Math.cos(h.driftAngle) * h.speed * dt;
+    h.y += Math.sin(h.driftAngle) * h.speed * dt;
+    bounceInWorld(h, false, h);
+  }
+
+  function getSegments() {
+    const segs = [];
+    for (let i = 1; i <= growth; i++) {
+      const idx = Math.min(player.trail.length - 1, i * TRAIL_PER_SEGMENT - 1);
+      const pt = idx >= 0 ? player.trail[idx] : { x: player.x, y: player.y };
+      segs.push({ x: pt.x, y: pt.y, r: Math.max(6, 13 - i * 1.4) });
+    }
+    return segs;
+  }
+
+  function bounceInWorld(entity, hasVel, hazard) {
+    const margin = 40;
+    if (entity.x < margin) { entity.x = margin; if (entity.vx !== undefined) entity.vx = Math.abs(entity.vx); if (hazard) hazard.driftAngle = 0; }
+    if (entity.x > WORLD_W - margin) { entity.x = WORLD_W - margin; if (entity.vx !== undefined) entity.vx = -Math.abs(entity.vx); if (hazard) hazard.driftAngle = Math.PI; }
+    if (entity.y < margin) { entity.y = margin; if (entity.vy !== undefined) entity.vy = Math.abs(entity.vy); if (hazard) hazard.driftAngle = Math.PI / 2; }
+    if (entity.y > WORLD_H - margin) { entity.y = WORLD_H - margin; if (entity.vy !== undefined) entity.vy = -Math.abs(entity.vy); if (hazard) hazard.driftAngle = -Math.PI / 2; }
+  }
+
+  function onEatPrey(p, cfg) {
+    score++;
+    growth++;
+    player.pulse = 1;
+    sfx.eatGood();
+    const np = randomWorldPos(player.x, player.y, SPAWN_EXCLUDE_RADIUS);
+    p.x = np.x; p.y = np.y;
+    if (score >= LEVEL_UP_SCORE) {
+      if (level >= LEVELS.length) beginFrogSequence();
+      else beginLevelTransition(level + 1);
+    }
+  }
+
+  function onEatHazard(h, cfg) {
+    score = Math.max(0, score - 1);
+    growth = Math.max(0, growth - 1);
+    player.pulse = 1;
+    sfx.eatHazard();
+    const nh = randomWorldPos(player.x, player.y, SPAWN_EXCLUDE_RADIUS);
+    h.x = nh.x; h.y = nh.y;
+  }
+
+  function beginLevelTransition(nextLevel) {
+    state = 'TRANSITION';
+    transitionTimer = 0;
+    transitionPhase = 0;
+    pendingLevel = nextLevel;
+    sfx.levelUp();
+  }
+
+  function frogGeometry() {
+    const cx = vw / 2, cy = vh / 2;
+    const fwd = { x: Math.cos(frogAngle), y: Math.sin(frogAngle) };
+    const mouthX = cx + fwd.x * (FROG_BODY_LEN / 2), mouthY = cy + fwd.y * (FROG_BODY_LEN / 2);
+    const tailX = cx - fwd.x * (FROG_BODY_LEN / 2), tailY = cy - fwd.y * (FROG_BODY_LEN / 2);
+    const entryDist = Math.max(vw, vh) * 0.75 + 200;
+    return { cx, cy, fwd, mouthX, mouthY, tailX, tailY, entryDist };
+  }
+
+  function beginFrogSequence() {
+    state = 'FROG';
+    frogTimer = 0;
+    frogSoundsFired = {};
+    frogAngle = FROG_DIAGONALS[Math.floor(Math.random() * FROG_DIAGONALS.length)];
+    frog.scale = 0;
+    frog.tongueLen = 0;
+    const geo = frogGeometry();
+    frog.cx = geo.cx - geo.fwd.x * geo.entryDist;
+    frog.cy = geo.cy - geo.fwd.y * geo.entryDist;
+    // snapshot the player's current body: the head plus every segment it has grown
+    cutParts.length = 0;
+    for (let i = 0; i <= growth; i++) {
+      cutParts.push({ x: 0, y: 0, r: i === 0 ? HEAD_RADIUS : Math.max(6, 13 - i * 1.4) });
+    }
+    cutPartsVisible = true;
+    lump.visible = false;
+    lump.scale = 1;
+    lump.count = 1;
+  }
+
+  function updatePlaying(dt) {
+    const cfg = LEVELS[level - 1];
+    const targetX = camera.x + pointer.x;
+    const targetY = camera.y + pointer.y;
+    const ease = 1 - Math.pow(0.001, dt);
+    player.x += (targetX - player.x) * Math.min(1, ease * 0.7);
+    player.y += (targetY - player.y) * Math.min(1, ease * 0.7);
+    player.x = clamp(player.x, 20, WORLD_W - 20);
+    player.y = clamp(player.y, 20, WORLD_H - 20);
+
+    player.pulse = Math.max(0, player.pulse - dt * 3);
+
+    const last = player.trail[0];
+    if (!last || dist(last.x, last.y, player.x, player.y) >= SEGMENT_STEP) {
+      player.trail.unshift({ x: player.x, y: player.y });
+      const maxLen = Math.max(LEVEL_UP_SCORE, growth) * TRAIL_PER_SEGMENT + 6;
+      if (player.trail.length > maxLen) player.trail.length = maxLen;
+    }
+
+    for (const p of prey) updatePrey(p, dt, cfg);
+    for (const h of hazards) updateHazard(h, dt);
+
+    for (const p of prey) {
+      if (dist(p.x, p.y, player.x, player.y) < HEAD_RADIUS + p.radius) { onEatPrey(p, cfg); break; }
+    }
+    if (state === 'PLAYING') {
+      const segs = getSegments();
+      for (const h of hazards) {
+        let hit = dist(h.x, h.y, player.x, player.y) < HEAD_RADIUS + h.radius;
+        if (!hit) {
+          for (const seg of segs) {
+            if (dist(h.x, h.y, seg.x, seg.y) < seg.r + h.radius) { hit = true; break; }
+          }
+        }
+        if (hit) { onEatHazard(h, cfg); break; }
+      }
+    }
+
+    camera.x = clamp(player.x - vw / 2, 0, Math.max(0, WORLD_W - vw));
+    camera.y = clamp(player.y - vh / 2, 0, Math.max(0, WORLD_H - vh));
+  }
+
+  function updateTransition(dt) {
+    transitionTimer += dt;
+    if (transitionPhase === 0 && transitionTimer >= 0.5) {
+      initLevel(pendingLevel, false);
+      transitionPhase = 1;
+      transitionTimer = 0;
+    } else if (transitionPhase === 1 && transitionTimer >= 0.5) {
+      state = 'PLAYING';
+    }
+    camera.x = clamp(player.x - vw / 2, 0, Math.max(0, WORLD_W - vw));
+    camera.y = clamp(player.y - vh / 2, 0, Math.max(0, WORLD_H - vh));
+  }
+
+  const FROG_BODY_LEN = 230, FROG_BODY_WID = 170;
+  const FROG_TONGUE_RANGE = 210;
+  const FROG_PART_SPACING = 18;
+  const FROG_ENTER_END = 0.5;
+  const FROG_TONGUE_OUT_END = 0.95;
+  const FROG_TONGUE_RETRACT_END = 1.35;
+  const FROG_DIGEST_END = 2.65;
+  const FROG_EXCRETE_END = 3.05;
+  const FROG_SETTLE_END = 3.6;
+
+  function updateFrog(dt) {
+    frogTimer += dt;
+    const t = frogTimer;
+    const geo = frogGeometry();
+
+    if (t < FROG_ENTER_END) {
+      const p = clamp(t / FROG_ENTER_END, 0, 1);
+      frog.scale = p;
+      const startCx = geo.cx - geo.fwd.x * geo.entryDist;
+      const startCy = geo.cy - geo.fwd.y * geo.entryDist;
+      frog.cx = startCx + (geo.cx - startCx) * p;
+      frog.cy = startCy + (geo.cy - startCy) * p;
+    } else {
+      frog.scale = 1;
+      frog.cx = geo.cx;
+      frog.cy = geo.cy;
+    }
+
+    if (t >= FROG_ENTER_END && t < FROG_TONGUE_OUT_END) {
+      if (!frogSoundsFired.tongue) { frogSoundsFired.tongue = true; sfx.tongue(); }
+      const p = clamp((t - FROG_ENTER_END) / (FROG_TONGUE_OUT_END - FROG_ENTER_END), 0, 1);
+      frog.tongueLen = p * FROG_TONGUE_RANGE;
+    } else if (t >= FROG_TONGUE_OUT_END && t < FROG_TONGUE_RETRACT_END) {
+      const p = clamp((t - FROG_TONGUE_OUT_END) / (FROG_TONGUE_RETRACT_END - FROG_TONGUE_OUT_END), 0, 1);
+      frog.tongueLen = (1 - p) * FROG_TONGUE_RANGE;
+    } else if (t >= FROG_TONGUE_RETRACT_END) {
+      frog.tongueLen = 0;
+      if (!frogSoundsFired.gulp) { frogSoundsFired.gulp = true; sfx.frogGulp(); cutPartsVisible = false; }
+    }
+
+    if (t < FROG_TONGUE_RETRACT_END) {
+      // the whole body (head + every segment) rides the tongue in as one rigid chain
+      const anchorX = geo.mouthX + geo.fwd.x * frog.tongueLen;
+      const anchorY = geo.mouthY + geo.fwd.y * frog.tongueLen;
+      for (let i = 0; i < cutParts.length; i++) {
+        cutParts[i].x = anchorX - geo.fwd.x * i * FROG_PART_SPACING;
+        cutParts[i].y = anchorY - geo.fwd.y * i * FROG_PART_SPACING;
+      }
+    }
+
+    if (t >= FROG_TONGUE_RETRACT_END && t < FROG_DIGEST_END) {
+      const p = clamp((t - FROG_TONGUE_RETRACT_END) / (FROG_DIGEST_END - FROG_TONGUE_RETRACT_END), 0, 1);
+      lump.visible = true;
+      lump.x = geo.mouthX + (geo.tailX - geo.mouthX) * p;
+      lump.y = geo.mouthY + (geo.tailY - geo.mouthY) * p;
+      lump.scale = 0.6 + Math.sin(p * Math.PI) * 0.25;
+      // the swallowed body is digested down to just the original single cell
+      lump.count = Math.max(1, Math.round(cutParts.length * (1 - p)));
+    } else if (t >= FROG_DIGEST_END && t < FROG_EXCRETE_END) {
+      if (!frogSoundsFired.splat) { frogSoundsFired.splat = true; sfx.splat(); }
+      const p = clamp((t - FROG_DIGEST_END) / (FROG_EXCRETE_END - FROG_DIGEST_END), 0, 1);
+      lump.visible = true;
+      lump.x = geo.tailX - geo.fwd.x * (p * 46);
+      lump.y = geo.tailY - geo.fwd.y * (p * 46);
+      lump.scale = 0.85 + p * 0.15;
+      lump.count = 1;
+    } else if (t >= FROG_EXCRETE_END) {
+      lump.visible = true;
+      lump.x = geo.tailX - geo.fwd.x * 46;
+      lump.y = geo.tailY - geo.fwd.y * 46;
+      lump.scale = 1;
+      lump.count = 1;
+    }
+
+    if (t >= FROG_SETTLE_END) {
+      state = 'PLAYING';
+      initLevel(1, true);
+    }
+  }
+
+  function update(dt) {
+    if (state === 'PLAYING') updatePlaying(dt);
+    else if (state === 'TRANSITION') updateTransition(dt);
+    else if (state === 'FROG') updateFrog(dt);
+    else if (state === 'TITLE') {
+      camera.x = 0; camera.y = 0;
+    }
+  }
+
+  // -------------------------------------------------------------- render
+  function drawBackground(cfg, alphaOverride) {
+    const g = ctx.createLinearGradient(0, 0, 0, vh);
+    g.addColorStop(0, cfg.bgTop);
+    g.addColorStop(1, cfg.bgBottom);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, vw, vh);
+
+    ctx.save();
+    for (const d of dust) {
+      const sx = d.x - camera.x * d.depth;
+      const sy = d.y - camera.y * d.depth;
+      const wsx = ((sx % vw) + vw) % vw;
+      const wsy = ((sy % vh) + vh) % vh;
+      ctx.globalAlpha = d.a * (alphaOverride ?? 1);
+      ctx.fillStyle = '#bfe9ff';
+      ctx.beginPath();
+      ctx.arc(wsx, wsy, d.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function glowPolygon(cx, cy, r, sides, color, glow, rotation) {
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = glow;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (let i = 0; i <= sides; i++) {
+      const a = (rotation ?? -Math.PI / 2) + (i / sides) * Math.PI * 2;
+      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawPlayer() {
+    const sx = player.x - camera.x;
+    const sy = player.y - camera.y;
+    const segs = getSegments();
+    for (let i = segs.length - 1; i >= 0; i--) {
+      const seg = segs[i];
+      glowPolygon(seg.x - camera.x, seg.y - camera.y, seg.r, 8, 'rgba(150,225,255,0.95)', 14);
+    }
+    const headR = HEAD_RADIUS + player.pulse * 5;
+    glowPolygon(sx, sy, headR, 8, 'rgba(210,245,255,0.95)', 20);
+  }
+
+  function drawPrey(cfg) {
+    for (const p of prey) {
+      const sx = p.x - camera.x, sy = p.y - camera.y;
+      if (sx < -30 || sy < -30 || sx > vw + 30 || sy > vh + 30) continue;
+      const wobble = Math.sin(performance.now() / 300 + p.phase) * 1.2;
+      glowPolygon(sx, sy, p.radius + wobble, 4, 'rgba(190,230,255,0.9)', 12);
+    }
+  }
+
+  function drawHazards() {
+    for (const h of hazards) {
+      const sx = h.x - camera.x, sy = h.y - camera.y;
+      if (sx < -30 || sy < -30 || sx > vw + 30 || sy > vh + 30) continue;
+      const wobble = Math.sin(performance.now() / 260 + h.phase) * 1.1;
+      glowPolygon(sx, sy, h.radius + wobble, 3, 'rgba(255,150,80,0.95)', 16);
+    }
+  }
+
+  function drawHUD() {
+    ctx.save();
+    ctx.font = '600 15px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.textBaseline = 'top';
+    ctx.fillText('Level ' + level, 20, 18);
+    for (let i = 0; i < LEVEL_UP_SCORE; i++) {
+      const cx = 24 + i * 22;
+      const cy = 46;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+      ctx.fillStyle = i < score ? 'rgba(180,230,255,0.95)' : 'rgba(255,255,255,0.18)';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawTitle() {
+    const cfg = LEVELS[0];
+    drawBackground(cfg);
+    ctx.save();
+    ctx.textAlign = 'center';
+    const cx = vw / 2, cy = vh / 2;
+    const t = performance.now() / 1000;
+    ctx.shadowColor = 'rgba(190,235,255,0.9)';
+    ctx.shadowBlur = 24 + Math.sin(t * 1.6) * 6;
+    ctx.fillStyle = 'rgba(235,250,255,0.95)';
+    ctx.font = '700 88px system-ui, sans-serif';
+    ctx.fillText('Frow', cx, cy - 40);
+    ctx.shadowBlur = 0;
+    ctx.font = '400 18px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(220,240,255,' + (0.5 + Math.sin(t * 2) * 0.3) + ')';
+    ctx.fillText('click / tap to begin', cx, cy + 40);
+    ctx.font = '400 14px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(200,225,245,0.6)';
+    ctx.fillText('move with mouse (PC) or touch-drag (mobile) — eat to grow, avoid orange', cx, cy + 74);
+    ctx.restore();
+  }
+
+  function drawTransitionOverlay() {
+    let alpha;
+    if (transitionPhase === 0) alpha = clamp(transitionTimer / 0.5, 0, 1);
+    else alpha = 1 - clamp(transitionTimer / 0.5, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, vw, vh);
+    ctx.restore();
+  }
+
+  function drawDigestCluster(cx, cy, count, r, color, glow) {
+    for (let i = 0; i < count; i++) {
+      const a = i * 2.4;
+      const spread = count > 1 ? 9 + (i % 3) * 4 : 0;
+      glowPolygon(cx + Math.cos(a) * spread, cy + Math.sin(a) * spread, r, 8, color, glow);
+    }
+  }
+
+  function drawFrog() {
+    const t = frogTimer;
+    const geo = frogGeometry();
+    const s = Math.min(frog.scale, 1);
+    const bw = FROG_BODY_LEN * s, bd = FROG_BODY_WID * s;
+    const mouthOpen = t >= FROG_ENTER_END && t < FROG_TONGUE_RETRACT_END ? 0.55 : 0.08;
+    const bodyColor = 'rgba(130,225,150,0.9)';
+
+    ctx.fillStyle = '#050503';
+    ctx.fillRect(0, 0, vw, vh);
+
+    ctx.save();
+    ctx.translate(frog.cx, frog.cy);
+    ctx.rotate(frogAngle);
+    // local +x = facing direction (toward the mouth); local y = side-to-side
+
+    // legs, splayed to the sides like a frog viewed from above - simple glowing triangles
+    glowPolygon(-bw * 0.22, bd * 0.44, bw * 0.16, 3, bodyColor, 12, -0.5);
+    glowPolygon(-bw * 0.22, -bd * 0.44, bw * 0.16, 3, bodyColor, 12, 0.5);
+    glowPolygon(bw * 0.2, bd * 0.34, bw * 0.09, 3, bodyColor, 12, -0.3);
+    glowPolygon(bw * 0.2, -bd * 0.34, bw * 0.09, 3, bodyColor, 12, 0.3);
+
+    // body - an outlined, empty octagon stretched into the frog's silhouette
+    ctx.save();
+    ctx.scale(1, bd / bw);
+    glowPolygon(0, 0, bw / 2, 8, bodyColor, 26);
+    ctx.restore();
+
+    // eyes, bulging on top near the front - hollow rings with a hollow pupil
+    glowPolygon(bw * 0.22, bd * 0.2, bw * 0.08, 12, 'rgba(230,255,220,0.95)', 10);
+    glowPolygon(bw * 0.22, -bd * 0.2, bw * 0.08, 12, 'rgba(230,255,220,0.95)', 10);
+    glowPolygon(bw * 0.22, bd * 0.2, bw * 0.03, 8, 'rgba(230,255,220,0.95)', 6);
+    glowPolygon(bw * 0.22, -bd * 0.2, bw * 0.03, 8, 'rgba(230,255,220,0.95)', 6);
+
+    // mouth, front tip - a hollow diamond that widens while open
+    glowPolygon(bw * 0.46, 0, bw * 0.05 + mouthOpen * bw * 0.06, 4, 'rgba(255,140,150,0.9)', 10);
+
+    ctx.restore();
+
+    // tongue (world-space line along the facing diagonal)
+    if (frog.tongueLen > 0.5) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(230,90,110,0.95)';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = 'rgba(230,90,110,0.6)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.moveTo(geo.mouthX, geo.mouthY);
+      ctx.lineTo(geo.mouthX + geo.fwd.x * frog.tongueLen, geo.mouthY + geo.fwd.y * frog.tongueLen);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // the player's own body - head plus every segment - riding the tongue in
+    if (cutPartsVisible) {
+      for (const part of cutParts) glowPolygon(part.x, part.y, part.r, 8, 'rgba(210,245,255,0.95)', 16);
+    }
+    // digesting down to, then excreting, just the original single cell
+    if (lump.visible) drawDigestCluster(lump.x, lump.y, lump.count, HEAD_RADIUS * 0.7 * lump.scale, 'rgba(210,245,255,0.95)', 16);
+
+    if (t >= FROG_EXCRETE_END) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = clamp((t - FROG_EXCRETE_END) / (FROG_SETTLE_END - FROG_EXCRETE_END), 0, 1);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = '400 20px system-ui, sans-serif';
+      ctx.fillText('…and so it begins again', vw / 2, vh / 2 + bd * 0.9 + 40);
+      ctx.restore();
+    }
+  }
+
+  function render() {
+    if (state === 'TITLE') {
+      drawTitle();
+      return;
+    }
+    if (state === 'FROG') {
+      drawFrog();
+      return;
+    }
+    const cfg = LEVELS[level - 1];
+    drawBackground(cfg);
+    drawHazards();
+    drawPrey(cfg);
+    drawPlayer();
+    drawHUD();
+    if (state === 'TRANSITION') drawTransitionOverlay();
+  }
+
+  // ---------------------------------------------------------------- loop
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
