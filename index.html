@@ -139,18 +139,21 @@
       preyCount: 9, hazardCount: 5,
       preySpeed: 55, preyFleeSpeed: 115, fleeRadius: 130, hazardSpeed: 22,
       droneFreq: 110,
+      playerSpeedMult: 0.75, // level 1: player is 25% slower than base
     },
     {
       bgTop: '#0d2c40', bgBottom: '#061622',
       preyCount: 10, hazardCount: 8,
       preySpeed: 70, preyFleeSpeed: 140, fleeRadius: 150, hazardSpeed: 28,
       droneFreq: 88,
+      playerSpeedMult: 0.75 * 0.9, // level 2: an additional 10% slower than level 1
     },
     {
       bgTop: '#061420', bgBottom: '#01070c',
       preyCount: 11, hazardCount: 11,
       preySpeed: 85, preyFleeSpeed: 165, fleeRadius: 170, hazardSpeed: 34,
       droneFreq: 66,
+      playerSpeedMult: 0.75 * 0.9 * 0.9, // level 3: an additional 10% slower than level 2
     },
   ];
 
@@ -409,8 +412,9 @@
     const targetX = camera.x + pointer.x;
     const targetY = camera.y + pointer.y;
     const ease = 1 - Math.pow(0.001, dt);
-    player.x += (targetX - player.x) * Math.min(1, ease * 0.7);
-    player.y += (targetY - player.y) * Math.min(1, ease * 0.7);
+    const speed = 0.7 * cfg.playerSpeedMult;
+    player.x += (targetX - player.x) * Math.min(1, ease * speed);
+    player.y += (targetY - player.y) * Math.min(1, ease * speed);
     player.x = clamp(player.x, 20, WORLD_W - 20);
     player.y = clamp(player.y, 20, WORLD_H - 20);
 
