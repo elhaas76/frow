@@ -590,23 +590,6 @@
     ctx.restore();
   }
 
-  function glowPolygon(cx, cy, r, sides, color, glow, rotation) {
-    ctx.save();
-    ctx.shadowColor = color;
-    ctx.shadowBlur = glow;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    for (let i = 0; i <= sides; i++) {
-      const a = (rotation ?? -Math.PI / 2) + (i / sides) * Math.PI * 2;
-      const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.stroke();
-    ctx.restore();
-  }
-
   function drawPlayer() {
     const sx = player.x - camera.x;
     const sy = player.y - camera.y;
@@ -695,7 +678,7 @@
     }
   }
 
-  function glowPath(color, glow, lineWidth, drawFn) {
+  function glowLine(x1, y1, x2, y2, color, glow, lineWidth) {
     ctx.save();
     ctx.shadowColor = color;
     ctx.shadowBlur = glow;
@@ -703,27 +686,19 @@
     ctx.lineWidth = lineWidth;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    drawFn();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
     ctx.stroke();
     ctx.restore();
   }
 
-  function drawFrogArm(R, color, sign) {
-    const shoulderX = 0.2 * R, shoulderY = 0.66 * R * sign;
-    const handX = 0.12 * R, handY = 1.15 * R * sign;
-    glowPath(color, 14, 2.5, () => {
-      ctx.moveTo(shoulderX, shoulderY);
-      ctx.quadraticCurveTo(0.05 * R, 0.95 * R * sign, handX, handY);
-    });
-    const baseAngle = Math.atan2(handY, handX);
-    for (let i = 0; i < 4; i++) {
-      const a = baseAngle + (i - 1.5) * 0.3;
-      const fingerLen = 0.24 * R;
-      glowPath(color, 10, 2.2, () => {
-        ctx.moveTo(handX, handY);
-        ctx.lineTo(handX + Math.cos(a) * fingerLen, handY + Math.sin(a) * fingerLen);
-      });
+  function drawFrogLimb(points, color, lineColor) {
+    let px = 0, py = 0;
+    for (const p of points) {
+      glowLine(px, py, p.x, p.y, lineColor, 6, 1.5);
+      px = p.x; py = p.y;
     }
+    for (const p of points) glowCircle(p.x, p.y, p.r, color, 16);
   }
 
   function drawFrog() {
@@ -731,56 +706,54 @@
     const geo = frogGeometry();
     const s = Math.min(frog.scale, 1);
     const R = (FROG_BODY_LEN / 2) * s;
-    const frogColor = 'rgba(130,225,150,0.9)';
-
-    ctx.fillStyle = '#050503';
-    ctx.fillRect(0, 0, vw, vh);
+    const frogColor = 'rgba(160,240,190,0.95)';
+    const eyeColor = 'rgba(255,255,255,0.95)';
+    const lineColor = 'rgba(160,240,190,0.55)';
 
     ctx.save();
     ctx.translate(frog.cx, frog.cy);
     ctx.rotate(frogAngle);
     // local +x = facing direction (toward the mouth); local y = side-to-side
 
-    // body/head - one rounded outline: twin eye-bumps up front, twin folded-leg
-    // lobes at the back, tracing the reference sketch's sitting silhouette
-    glowPath(frogColor, 24, 2.5, () => {
-      ctx.moveTo(-0.85 * R, 0);
-      ctx.quadraticCurveTo(-0.6 * R, 0.55 * R, -0.35 * R, 0.72 * R);
-      ctx.quadraticCurveTo(-0.05 * R, 0.85 * R, 0.25 * R, 0.68 * R);
-      ctx.quadraticCurveTo(0.5 * R, 0.75 * R, 0.68 * R, 0.46 * R);
-      ctx.quadraticCurveTo(0.85 * R, 0.58 * R, 0.95 * R, 0);
-      ctx.quadraticCurveTo(0.85 * R, -0.58 * R, 0.68 * R, -0.46 * R);
-      ctx.quadraticCurveTo(0.5 * R, -0.75 * R, 0.25 * R, -0.68 * R);
-      ctx.quadraticCurveTo(-0.05 * R, -0.85 * R, -0.35 * R, -0.72 * R);
-      ctx.quadraticCurveTo(-0.6 * R, -0.55 * R, -0.85 * R, 0);
-      ctx.closePath();
-    });
+    const arm = (sign) => [
+      { x: 0.28 * R, y: 0.42 * R * sign, r: 0.22 * R },
+      { x: 0.14 * R, y: 0.78 * R * sign, r: 0.15 * R },
+      { x: 0.06 * R, y: 1.05 * R * sign, r: 0.09 * R },
+    ];
+    const leg = (sign) => [
+      { x: -0.22 * R, y: 0.5 * R * sign, r: 0.24 * R },
+      { x: -0.46 * R, y: 0.68 * R * sign, r: 0.16 * R },
+      { x: -0.62 * R, y: 0.86 * R * sign, r: 0.1 * R },
+    ];
 
-    // arms, reaching out to the sides with small splayed hands
-    drawFrogArm(R, frogColor, 1);
-    drawFrogArm(R, frogColor, -1);
+    const armR = arm(1), armL = arm(-1);
+    drawFrogLimb(armR, frogColor, lineColor);
+    drawFrogLimb(armL, frogColor, lineColor);
+    drawFrogLimb(leg(1), frogColor, lineColor);
+    drawFrogLimb(leg(-1), frogColor, lineColor);
 
-    // eyes, bulging on the front twin bumps - hollow rings with a hollow pupil
-    glowPolygon(0.62 * R, 0.42 * R, 0.26 * R, 16, frogColor, 10);
-    glowPolygon(0.62 * R, -0.42 * R, 0.26 * R, 16, frogColor, 10);
-    glowPolygon(0.62 * R, 0.42 * R, 0.09 * R, 10, frogColor, 6);
-    glowPolygon(0.62 * R, -0.42 * R, 0.09 * R, 10, frogColor, 6);
+    // fingers - a small fan of glowing dots at each hand
+    for (const [tip, sign] of [[armR[2], 1], [armL[2], -1]]) {
+      const baseAngle = Math.atan2(tip.y, tip.x);
+      for (let i = 0; i < 4; i++) {
+        const a = baseAngle + (i - 1.5) * 0.34;
+        glowLine(tip.x, tip.y, tip.x + Math.cos(a) * 0.16 * R, tip.y + Math.sin(a) * 0.16 * R, lineColor, 4, 1.2);
+        glowCircle(tip.x + Math.cos(a) * 0.16 * R, tip.y + Math.sin(a) * 0.16 * R, 0.045 * R, frogColor, 8);
+      }
+    }
+
+    // body
+    glowCircle(0, 0, 0.55 * R, frogColor, 30);
+
+    // eyes, bulging on the front twin bumps
+    glowCircle(0.4 * R, 0.24 * R, 0.1 * R, eyeColor, 14);
+    glowCircle(0.4 * R, -0.24 * R, 0.1 * R, eyeColor, 14);
 
     ctx.restore();
 
     // tongue (world-space line along the facing diagonal)
     if (frog.tongueLen > 0.5) {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(230,90,110,0.95)';
-      ctx.lineWidth = 6;
-      ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(230,90,110,0.6)';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.moveTo(geo.mouthX, geo.mouthY);
-      ctx.lineTo(geo.mouthX + geo.fwd.x * frog.tongueLen, geo.mouthY + geo.fwd.y * frog.tongueLen);
-      ctx.stroke();
-      ctx.restore();
+      glowLine(geo.mouthX, geo.mouthY, geo.mouthX + geo.fwd.x * frog.tongueLen, geo.mouthY + geo.fwd.y * frog.tongueLen, 'rgba(230,90,110,0.95)', 12, 5);
     }
 
     // the player's own body - head plus every segment - riding the tongue in
@@ -807,6 +780,10 @@
       return;
     }
     if (state === 'FROG') {
+      const lastCfg = LEVELS[LEVELS.length - 1];
+      drawBackground(lastCfg);
+      drawHazards();
+      drawPrey(lastCfg);
       drawFrog();
       return;
     }
