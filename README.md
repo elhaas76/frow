@@ -6,7 +6,7 @@ with an original geometric, glowing-outline art style).
 
 ## Play
 
-Open [`frow.html`](frow.html) directly in a browser — no build step, no dependencies, no server.
+Open [`index.html`](index.html) directly in a browser — no build step, no dependencies, no server.
 
 - **Move**: mouse (desktop) or touch-drag (mobile)
 - **Eat** glowing diamonds to grow a longer segmented chain (+1 point)
