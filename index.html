@@ -571,6 +571,21 @@
     ctx.restore();
   }
 
+  function glowCircle(x, y, r, color, glow) {
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = glow;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+    grad.addColorStop(0.35, color);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function glowPolygon(cx, cy, r, sides, color, glow, rotation) {
     ctx.save();
     ctx.shadowColor = color;
@@ -594,10 +609,10 @@
     const segs = getSegments();
     for (let i = segs.length - 1; i >= 0; i--) {
       const seg = segs[i];
-      glowPolygon(seg.x - camera.x, seg.y - camera.y, seg.r, 8, 'rgba(150,225,255,0.95)', 14);
+      glowCircle(seg.x - camera.x, seg.y - camera.y, seg.r, 'rgba(140,220,255,0.9)', 14);
     }
     const headR = HEAD_RADIUS + player.pulse * 5;
-    glowPolygon(sx, sy, headR, 8, 'rgba(210,245,255,0.95)', 20);
+    glowCircle(sx, sy, headR, 'rgba(200,240,255,0.95)', 22);
   }
 
   function drawPrey(cfg) {
@@ -605,7 +620,7 @@
       const sx = p.x - camera.x, sy = p.y - camera.y;
       if (sx < -30 || sy < -30 || sx > vw + 30 || sy > vh + 30) continue;
       const wobble = Math.sin(performance.now() / 300 + p.phase) * 1.2;
-      glowPolygon(sx, sy, p.radius + wobble, 4, 'rgba(190,230,255,0.9)', 12);
+      glowCircle(sx, sy, p.radius + wobble, 'rgba(190,230,255,0.85)', 10);
     }
   }
 
@@ -614,7 +629,7 @@
       const sx = h.x - camera.x, sy = h.y - camera.y;
       if (sx < -30 || sy < -30 || sx > vw + 30 || sy > vh + 30) continue;
       const wobble = Math.sin(performance.now() / 260 + h.phase) * 1.1;
-      glowPolygon(sx, sy, h.radius + wobble, 3, 'rgba(255,150,80,0.95)', 16);
+      glowCircle(sx, sy, h.radius + wobble, 'rgba(255,140,66,0.9)', 16);
     }
   }
 
@@ -672,7 +687,7 @@
     for (let i = 0; i < count; i++) {
       const a = i * 2.4;
       const spread = count > 1 ? 9 + (i % 3) * 4 : 0;
-      glowPolygon(cx + Math.cos(a) * spread, cy + Math.sin(a) * spread, r, 8, color, glow);
+      glowCircle(cx + Math.cos(a) * spread, cy + Math.sin(a) * spread, r, color, glow);
     }
   }
 
@@ -732,10 +747,10 @@
 
     // the player's own body - head plus every segment - riding the tongue in
     if (cutPartsVisible) {
-      for (const part of cutParts) glowPolygon(part.x, part.y, part.r, 8, 'rgba(210,245,255,0.95)', 16);
+      for (const part of cutParts) glowCircle(part.x, part.y, part.r, 'rgba(200,240,255,0.95)', 18);
     }
     // digesting down to, then excreting, just the original single cell
-    if (lump.visible) drawDigestCluster(lump.x, lump.y, lump.count, HEAD_RADIUS * 0.7 * lump.scale, 'rgba(210,245,255,0.95)', 16);
+    if (lump.visible) drawDigestCluster(lump.x, lump.y, lump.count, HEAD_RADIUS * 0.7 * lump.scale, 'rgba(200,240,255,0.95)', 18);
 
     if (t >= FROG_EXCRETE_END) {
       ctx.save();
